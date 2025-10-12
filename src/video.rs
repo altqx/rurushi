@@ -29,7 +29,10 @@ pub async fn scan_for_videos(folder: &Path) -> Vec<PathBuf> {
                         println!("[scan] Video file accepted: {}", path.display());
                         video_files.push(path.to_path_buf());
                     } else {
-                        println!("[scan] Extension '{}' not in video extensions list", ext_lower);
+                        println!(
+                            "[scan] Extension '{}' not in video extensions list",
+                            ext_lower
+                        );
                     }
                 } else {
                     println!("[scan] Could not convert extension to string");
@@ -40,7 +43,10 @@ pub async fn scan_for_videos(folder: &Path) -> Vec<PathBuf> {
         }
     }
 
-    println!("[scan] Scan complete. Found {} video files", video_files.len());
+    println!(
+        "[scan] Scan complete. Found {} video files",
+        video_files.len()
+    );
     for (i, file) in video_files.iter().enumerate() {
         println!("[scan] {}: {}", i + 1, file.display());
     }

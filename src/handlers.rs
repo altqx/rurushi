@@ -1,15 +1,16 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
+    Json,
     extract::{Path as AxPath, State},
     http::{HeaderMap, StatusCode, Uri, header},
     response::{IntoResponse, Redirect, Response},
-    Json,
 };
 
 use crate::models::{
-    AppState, ChannelInfo, FolderScanResult, LoadPlaylistRequest, SavePlaylistRequest,
-    SetPlaylistRequest, SetVideosFolderRequest, AppConfig, SaveConfigRequest, LoadConfigRequest,
+    AppConfig, AppState, ChannelInfo, FolderScanResult, LoadConfigRequest, LoadPlaylistRequest,
+    SaveConfigRequest, SavePlaylistRequest, SetPlaylistRequest, SetSubtitleModeRequest,
+    SetVideosFolderRequest,
 };
 use crate::streaming::{start_tv_loop_if_needed, wait_for_file};
 use crate::video::{organize_shows_and_episodes, scan_for_videos};
@@ -60,6 +61,19 @@ pub async fn root() -> impl IntoResponse {
             </div>
         </div>
 
+        <div id="subtitle-section" style="margin-top: 20px;">
+            <h2>Subtitle Settings</h2>
+            <div style="margin-bottom: 15px;">
+                <label for="subtitle-mode" style="margin-right: 10px;">Subtitle Mode:</label>
+                <select id="subtitle-mode" onchange="setSubtitleMode()" style="padding: 8px; border-radius: 3px;">
+                    <option value="None">None (No subtitles)</option>
+                    <option value="Smart">Smart (Auto-detect: Convert text subs, burn bitmap subs)</option>
+                </select>
+                <button onclick="getSubtitleMode()" style="margin-left: 10px; padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer;">Refresh</button>
+            </div>
+            <div id="subtitle-status" style="margin-top: 10px;"></div>
+        </div>
+
         <div id="channels-section" style="margin-top: 20px;">
             <h2>Channels</h2>
             <p>List channels: <a href="/api/channels">/api/channels</a></p>
@@ -76,6 +90,43 @@ pub async fn root() -> impl IntoResponse {
         </div>
 
         <script>
+            window.addEventListener('DOMContentLoaded', () => {
+                getSubtitleMode();
+            });
+
+            async function getSubtitleMode() {
+                try {
+                    const response = await fetch('/api/subtitle-mode');
+                    const data = await response.json();
+                    const select = document.getElementById('subtitle-mode');
+                    select.value = data.subtitle_mode;
+                    document.getElementById('subtitle-status').innerHTML =
+                        `<p style="color: green">Current mode: <strong>${data.subtitle_mode}</strong></p>`;
+                } catch (error) {
+                    console.error('Error loading subtitle mode:', error);
+                }
+            }
+
+            async function setSubtitleMode() {
+                const mode = document.getElementById('subtitle-mode').value;
+                try {
+                    const response = await fetch('/api/subtitle-mode', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ mode: mode })
+                    });
+
+                    const result = await response.json();
+                    document.getElementById('subtitle-status').innerHTML =
+                        `<p style="color: ${result.success ? 'green' : 'red'}">${result.message}</p>`;
+                } catch (error) {
+                    document.getElementById('subtitle-status').innerHTML =
+                        `<p style="color: red">Error: ${error.message}</p>`;
+                }
+            }
+
             async function setVideosFolder() {
                 const path = document.getElementById('folder-path').value;
                 if (!path) {
@@ -419,10 +470,16 @@ pub async fn stream_m3u8(
         println!("[stream] HLS playlist not found, starting TV loop...");
         start_tv_loop_if_needed(state.clone()).await;
 
-        println!("[stream] Waiting for HLS playlist at: {}", playlist.display());
+        println!(
+            "[stream] Waiting for HLS playlist at: {}",
+            playlist.display()
+        );
         let started = wait_for_file(&playlist, Duration::from_secs(8)).await;
         if !started {
-            println!("[stream] TIMEOUT: HLS playlist did not appear at: {}", playlist.display());
+            println!(
+                "[stream] TIMEOUT: HLS playlist did not appear at: {}",
+                playlist.display()
+            );
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Timed out waiting for HLS playlist".into(),
@@ -690,12 +747,14 @@ pub async fn save_config(
     let shows = state.shows.read().await.clone();
     let playlist = state.playlist.read().await.clone();
     let played_episodes = state.played_episodes.read().await.clone();
+    let subtitle_mode = state.subtitle_mode.read().await.clone();
 
     let config = AppConfig {
         videos_folder,
         shows,
         playlist,
         played_episodes,
+        subtitle_mode,
     };
 
     let config_file = state
@@ -710,12 +769,7 @@ pub async fn save_config(
         }));
     }
 
-    match tokio::fs::write(
-        &config_file,
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .await
-    {
+    match tokio::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).await {
         Ok(_) => Json(serde_json::json!({
             "success": true,
             "message": format!("Configuration saved as {}", request.name)
@@ -737,35 +791,34 @@ pub async fn load_config(
         .join(format!("{}.json", request.name));
 
     match tokio::fs::read_to_string(&config_file).await {
-        Ok(content) => {
-            match serde_json::from_str::<AppConfig>(&content) {
-                Ok(config) => {
-                    *state.videos_folder.write().await = config.videos_folder.clone();
-                    *state.shows.write().await = config.shows.clone();
-                    *state.playlist.write().await = config.playlist.clone();
-                    *state.played_episodes.write().await = config.played_episodes.clone();
+        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+            Ok(config) => {
+                *state.videos_folder.write().await = config.videos_folder.clone();
+                *state.shows.write().await = config.shows.clone();
+                *state.playlist.write().await = config.playlist.clone();
+                *state.played_episodes.write().await = config.played_episodes.clone();
+                *state.subtitle_mode.write().await = config.subtitle_mode.clone();
 
-                    if !config.shows.is_empty() {
-                        let mut tv_files = Vec::new();
-                        for episodes in config.shows.values() {
-                            for episode in episodes {
-                                tv_files.push(episode.file_path.clone());
-                            }
+                if !config.shows.is_empty() {
+                    let mut tv_files = Vec::new();
+                    for episodes in config.shows.values() {
+                        for episode in episodes {
+                            tv_files.push(episode.file_path.clone());
                         }
-                        *state.tv_files.write().await = tv_files;
                     }
-
-                    Json(serde_json::json!({
-                        "success": true,
-                        "message": format!("Configuration '{}' loaded successfully", request.name)
-                    }))
+                    *state.tv_files.write().await = tv_files;
                 }
-                Err(e) => Json(serde_json::json!({
-                    "success": false,
-                    "message": format!("Invalid configuration format: {}", e)
-                })),
+
+                Json(serde_json::json!({
+                    "success": true,
+                    "message": format!("Configuration '{}' loaded successfully", request.name)
+                }))
             }
-        }
+            Err(e) => Json(serde_json::json!({
+                "success": false,
+                "message": format!("Invalid configuration format: {}", e)
+            })),
+        },
         Err(_) => Json(serde_json::json!({
             "success": false,
             "message": format!("Configuration '{}' not found", request.name)
@@ -802,7 +855,11 @@ pub async fn start_streaming(State(state): State<Arc<AppState>>) -> impl IntoRes
     let tv_files = state.tv_files.read().await;
     let shows = state.shows.read().await;
 
-    println!("[api] Start streaming requested - tv_files: {}, shows: {}", tv_files.len(), shows.len());
+    println!(
+        "[api] Start streaming requested - tv_files: {}, shows: {}",
+        tv_files.len(),
+        shows.len()
+    );
 
     if tv_files.is_empty() && shows.is_empty() {
         println!("[api] No video files or shows available for streaming");
@@ -827,5 +884,30 @@ pub async fn start_streaming(State(state): State<Arc<AppState>>) -> impl IntoRes
     Json(serde_json::json!({
         "success": true,
         "message": "Streaming started successfully"
+    }))
+}
+
+pub async fn get_subtitle_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let subtitle_mode = state.subtitle_mode.read().await.clone();
+    Json(serde_json::json!({
+        "subtitle_mode": subtitle_mode
+    }))
+}
+
+pub async fn set_subtitle_mode(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SetSubtitleModeRequest>,
+) -> impl IntoResponse {
+    println!("[api] Setting subtitle mode to: {:?}", request.mode);
+
+    let mut subtitle_mode = state.subtitle_mode.write().await;
+    *subtitle_mode = request.mode.clone();
+
+    println!("[api] Subtitle mode updated successfully");
+
+    Json(serde_json::json!({
+        "success": true,
+        "mode": request.mode,
+        "message": format!("Subtitle mode set to {:?}", request.mode)
     }))
 }

@@ -6,11 +6,14 @@ mod video;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
-use axum::{routing::{get, post}, Router};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use tokio::{fs, net::TcpListener, sync::RwLock};
 use tower_http::services::ServeDir;
 
-use models::{AppState, AppConfig};
+use models::{AppConfig, AppState};
 use streaming::start_tv_loop_if_needed;
 
 /// Load the default configuration if it exists
@@ -19,17 +22,18 @@ async fn load_default_config(hls_root: &std::path::Path) -> AppConfig {
 
     if config_file.exists() {
         match tokio::fs::read_to_string(&config_file).await {
-            Ok(content) => {
-                match serde_json::from_str::<AppConfig>(&content) {
-                    Ok(config) => {
-                        println!("Loaded default configuration from {}", config_file.display());
-                        return config;
-                    }
-                    Err(e) => {
-                        println!("Failed to parse default configuration: {}", e);
-                    }
+            Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                Ok(config) => {
+                    println!(
+                        "Loaded default configuration from {}",
+                        config_file.display()
+                    );
+                    return config;
                 }
-            }
+                Err(e) => {
+                    println!("Failed to parse default configuration: {}", e);
+                }
+            },
             Err(e) => {
                 println!("Failed to read default configuration: {}", e);
             }
@@ -42,7 +46,6 @@ async fn load_default_config(hls_root: &std::path::Path) -> AppConfig {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
     let hls_root = std::env::temp_dir().join("Rurushi-hls");
     fs::create_dir_all(&hls_root).await?;
     let config = load_default_config(&hls_root).await;
@@ -64,6 +67,7 @@ async fn main() -> Result<()> {
         shows: RwLock::new(config.shows),
         playlist: RwLock::new(config.playlist),
         played_episodes: Arc::new(RwLock::new(config.played_episodes)),
+        subtitle_mode: RwLock::new(config.subtitle_mode),
     });
 
     start_tv_loop_if_needed(state.clone()).await;
@@ -85,6 +89,8 @@ async fn main() -> Result<()> {
         .route("/api/configs", get(handlers::list_configs))
         .route("/api/config/save", post(handlers::save_config))
         .route("/api/config/load", post(handlers::load_config))
+        .route("/api/subtitle-mode", get(handlers::get_subtitle_mode))
+        .route("/api/subtitle-mode", post(handlers::set_subtitle_mode))
         .route("/api/start-streaming", post(handlers::start_streaming))
         .nest_service("/hls", ServeDir::new(state.hls_root.clone()))
         .with_state(state.clone());

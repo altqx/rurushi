@@ -1,11 +1,19 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::{sync::RwLock, task::JoinHandle};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum SubtitleMode {
+    None,
+    Smart,
+}
+
+impl Default for SubtitleMode {
+    fn default() -> Self {
+        SubtitleMode::None
+    }
+}
 
 pub struct AppState {
     pub tv_files: RwLock<Vec<PathBuf>>,
@@ -15,6 +23,7 @@ pub struct AppState {
     pub shows: RwLock<HashMap<String, Vec<Episode>>>,
     pub playlist: RwLock<Vec<PlaylistItem>>,
     pub played_episodes: Arc<RwLock<HashMap<String, Vec<usize>>>>,
+    pub subtitle_mode: RwLock<SubtitleMode>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -74,6 +83,7 @@ pub struct AppConfig {
     pub shows: HashMap<String, Vec<Episode>>,
     pub playlist: Vec<PlaylistItem>,
     pub played_episodes: HashMap<String, Vec<usize>>,
+    pub subtitle_mode: SubtitleMode,
 }
 
 impl Default for AppConfig {
@@ -83,6 +93,7 @@ impl Default for AppConfig {
             shows: HashMap::new(),
             playlist: Vec::new(),
             played_episodes: HashMap::new(),
+            subtitle_mode: SubtitleMode::default(),
         }
     }
 }
@@ -95,4 +106,9 @@ pub struct SaveConfigRequest {
 #[derive(Deserialize)]
 pub struct LoadConfigRequest {
     pub name: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetSubtitleModeRequest {
+    pub mode: SubtitleMode,
 }
