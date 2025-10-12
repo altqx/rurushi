@@ -1,22 +1,31 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{ collections::HashMap, path::PathBuf, sync::Arc, time::Duration };
 
 use axum::{
     Json,
-    extract::{Path as AxPath, State},
-    http::{HeaderMap, StatusCode, Uri, header},
-    response::{IntoResponse, Redirect, Response},
+    extract::{ Path as AxPath, State },
+    http::{ HeaderMap, StatusCode, Uri, header },
+    response::{ IntoResponse, Redirect, Response },
 };
 
 use crate::models::{
-    AppConfig, AppState, ChannelInfo, FolderScanResult, LoadConfigRequest, LoadPlaylistRequest,
-    SaveConfigRequest, SavePlaylistRequest, SetPlaylistRequest, SetSubtitleModeRequest,
+    AppConfig,
+    AppState,
+    ChannelInfo,
+    FolderScanResult,
+    LoadConfigRequest,
+    LoadPlaylistRequest,
+    SaveConfigRequest,
+    SavePlaylistRequest,
+    SetPlaylistRequest,
+    SetSubtitleModeRequest,
     SetVideosFolderRequest,
 };
-use crate::streaming::{start_tv_loop_if_needed, wait_for_file};
-use crate::video::{organize_shows_and_episodes, scan_for_videos};
+use crate::streaming::{ start_tv_loop_if_needed, wait_for_file };
+use crate::video::{ organize_shows_and_episodes, scan_for_videos };
 
 pub async fn root() -> impl IntoResponse {
-    let body = r#"<html><body>
+    let body =
+        r#"<html><body>
         <h1>Rurushi HLS</h1>
         <div id="folder-section">
             <h2>Videos Folder</h2>
@@ -439,25 +448,25 @@ pub async fn root() -> impl IntoResponse {
 }
 
 pub async fn list_channels(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let sources = state
-        .tv_files
-        .read()
-        .await
+    let sources = state.tv_files
+        .read().await
         .iter()
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>();
-    Json(vec![ChannelInfo {
-        id: "tv".into(),
-        sources,
-        m3u8: "/stream/tv".into(),
-    }])
+    Json(
+        vec![ChannelInfo {
+            id: "tv".into(),
+            sources,
+            m3u8: "/stream/tv".into(),
+        }]
+    )
 }
 
 pub async fn stream_m3u8(
     State(state): State<Arc<AppState>>,
     AxPath(id): AxPath<String>,
     _uri: Uri,
-    _headers: HeaderMap,
+    _headers: HeaderMap
 ) -> Result<Response, (StatusCode, String)> {
     if id != "tv" {
         return Err((StatusCode::NOT_FOUND, format!("unknown channel: {id}")));
@@ -470,16 +479,10 @@ pub async fn stream_m3u8(
         println!("[stream] HLS playlist not found, starting TV loop...");
         start_tv_loop_if_needed(state.clone()).await;
 
-        println!(
-            "[stream] Waiting for HLS playlist at: {}",
-            playlist.display()
-        );
+        println!("[stream] Waiting for HLS playlist at: {}", playlist.display());
         let started = wait_for_file(&playlist, Duration::from_secs(8)).await;
         if !started {
-            println!(
-                "[stream] TIMEOUT: HLS playlist did not appear at: {}",
-                playlist.display()
-            );
+            println!("[stream] TIMEOUT: HLS playlist did not appear at: {}", playlist.display());
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Timed out waiting for HLS playlist".into(),
@@ -493,14 +496,16 @@ pub async fn stream_m3u8(
 
 pub async fn get_videos_folder(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let folder = state.videos_folder.read().await;
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "videos_folder": folder.as_ref().map(|p| p.display().to_string())
-    }))
+    })
+    )
 }
 
 pub async fn set_videos_folder(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SetVideosFolderRequest>,
+    Json(request): Json<SetVideosFolderRequest>
 ) -> impl IntoResponse {
     let path = PathBuf::from(request.path);
     if !path.exists() || !path.is_dir() {
@@ -545,21 +550,13 @@ pub async fn scan_videos_folder(State(state): State<Arc<AppState>>) -> impl Into
     *state.tv_files.write().await = video_files.clone();
     *state.shows.write().await = shows.clone();
 
-    println!(
-        "Found {} video files across {} shows",
-        video_files.len(),
-        shows.len()
-    );
+    println!("Found {} video files across {} shows", video_files.len(), shows.len());
 
     Json(FolderScanResult {
         success: true,
         video_count: video_files.len(),
         videos_folder: Some(folder.display().to_string()),
-        message: format!(
-            "Found {} video files across {} shows",
-            video_files.len(),
-            shows.len()
-        ),
+        message: format!("Found {} video files across {} shows", video_files.len(), shows.len()),
     })
 }
 
@@ -593,25 +590,29 @@ pub async fn get_playlist(State(state): State<Arc<AppState>>) -> impl IntoRespon
 
 pub async fn set_playlist(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SetPlaylistRequest>,
+    Json(request): Json<SetPlaylistRequest>
 ) -> impl IntoResponse {
     *state.playlist.write().await = request.playlist.clone();
     *state.played_episodes.write().await = HashMap::new();
 
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "success": true,
         "message": format!("Playlist set with {} items", request.playlist.len())
-    }))
+    })
+    )
 }
 
 pub async fn enable_auto_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let shows = state.shows.read().await.clone();
 
     if shows.is_empty() {
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": "No shows available for auto mode"
-        }));
+        })
+        );
     }
 
     let mut playlist = Vec::new();
@@ -626,10 +627,12 @@ pub async fn enable_auto_mode(State(state): State<Arc<AppState>>) -> impl IntoRe
     *state.playlist.write().await = playlist.clone();
     *state.played_episodes.write().await = HashMap::new();
 
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "success": true,
         "message": format!("Auto mode enabled with {} shows", playlist.len())
-    }))
+    })
+    )
 }
 
 pub async fn get_playlist_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -649,7 +652,8 @@ pub async fn get_playlist_status(State(state): State<Arc<AppState>>) -> impl Int
         }
     }
 
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "playlist_items": playlist.len(),
         "total_episodes": total_episodes,
         "played_episodes": played_total,
@@ -659,60 +663,60 @@ pub async fn get_playlist_status(State(state): State<Arc<AppState>>) -> impl Int
             0
         },
         "is_auto_mode": playlist.len() == shows_count && shows.values().all(|eps| eps.len() > 0)
-    }))
+    })
+    )
 }
 
 pub async fn save_playlist(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SavePlaylistRequest>,
+    Json(request): Json<SavePlaylistRequest>
 ) -> impl IntoResponse {
     let playlist = state.playlist.read().await.clone();
 
     if playlist.is_empty() {
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": "No playlist to save"
-        }));
+        })
+        );
     }
 
-    let playlist_file = state
-        .hls_root
-        .join("playlists")
-        .join(format!("{}.json", request.name));
+    let playlist_file = state.hls_root.join("playlists").join(format!("{}.json", request.name));
 
     if let Err(e) = tokio::fs::create_dir_all(playlist_file.parent().unwrap()).await {
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": format!("Failed to create playlists directory: {}", e)
-        }));
+        })
+        );
     }
 
-    match tokio::fs::write(
-        &playlist_file,
-        serde_json::to_string_pretty(&playlist).unwrap(),
-    )
-    .await
-    {
-        Ok(_) => Json(serde_json::json!({
+    match tokio::fs::write(&playlist_file, serde_json::to_string_pretty(&playlist).unwrap()).await {
+        Ok(_) =>
+            Json(
+                serde_json::json!({
             "success": true,
             "message": format!("Playlist saved as {}", request.name)
-        })),
-        Err(e) => Json(serde_json::json!({
+        })
+            ),
+        Err(e) =>
+            Json(
+                serde_json::json!({
             "success": false,
             "message": format!("Failed to save playlist: {}", e)
-        })),
+        })
+            ),
     }
 }
 
 /// Load a saved playlist from a file
 pub async fn load_playlist(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<LoadPlaylistRequest>,
+    Json(request): Json<LoadPlaylistRequest>
 ) -> impl IntoResponse {
-    let playlist_file = state
-        .hls_root
-        .join("playlists")
-        .join(format!("{}.json", request.name));
+    let playlist_file = state.hls_root.join("playlists").join(format!("{}.json", request.name));
 
     match tokio::fs::read_to_string(&playlist_file).await {
         Ok(content) => {
@@ -721,27 +725,35 @@ pub async fn load_playlist(
                     *state.playlist.write().await = playlist.clone();
                     *state.played_episodes.write().await = HashMap::new(); // Reset tracking
 
-                    Json(serde_json::json!({
+                    Json(
+                        serde_json::json!({
                         "success": true,
                         "message": format!("Playlist '{}' loaded with {} items", request.name, playlist.len())
-                    }))
+                    })
+                    )
                 }
-                Err(e) => Json(serde_json::json!({
+                Err(e) =>
+                    Json(
+                        serde_json::json!({
                     "success": false,
                     "message": format!("Invalid playlist format: {}", e)
-                })),
+                })
+                    ),
             }
         }
-        Err(_) => Json(serde_json::json!({
+        Err(_) =>
+            Json(
+                serde_json::json!({
             "success": false,
             "message": format!("Playlist '{}' not found", request.name)
-        })),
+        })
+            ),
     }
 }
 
 pub async fn save_config(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SaveConfigRequest>,
+    Json(request): Json<SaveConfigRequest>
 ) -> impl IntoResponse {
     let videos_folder = state.videos_folder.read().await.clone();
     let shows = state.shows.read().await.clone();
@@ -757,72 +769,83 @@ pub async fn save_config(
         subtitle_mode,
     };
 
-    let config_file = state
-        .hls_root
-        .join("configs")
-        .join(format!("{}.json", request.name));
+    let config_file = state.hls_root.join("configs").join(format!("{}.json", request.name));
 
     if let Err(e) = tokio::fs::create_dir_all(config_file.parent().unwrap()).await {
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": format!("Failed to create configs directory: {}", e)
-        }));
+        })
+        );
     }
 
     match tokio::fs::write(&config_file, serde_json::to_string_pretty(&config).unwrap()).await {
-        Ok(_) => Json(serde_json::json!({
+        Ok(_) =>
+            Json(
+                serde_json::json!({
             "success": true,
             "message": format!("Configuration saved as {}", request.name)
-        })),
-        Err(e) => Json(serde_json::json!({
+        })
+            ),
+        Err(e) =>
+            Json(
+                serde_json::json!({
             "success": false,
             "message": format!("Failed to save configuration: {}", e)
-        })),
+        })
+            ),
     }
 }
 
 pub async fn load_config(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<LoadConfigRequest>,
+    Json(request): Json<LoadConfigRequest>
 ) -> impl IntoResponse {
-    let config_file = state
-        .hls_root
-        .join("configs")
-        .join(format!("{}.json", request.name));
+    let config_file = state.hls_root.join("configs").join(format!("{}.json", request.name));
 
     match tokio::fs::read_to_string(&config_file).await {
-        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-            Ok(config) => {
-                *state.videos_folder.write().await = config.videos_folder.clone();
-                *state.shows.write().await = config.shows.clone();
-                *state.playlist.write().await = config.playlist.clone();
-                *state.played_episodes.write().await = config.played_episodes.clone();
-                *state.subtitle_mode.write().await = config.subtitle_mode.clone();
+        Ok(content) =>
+            match serde_json::from_str::<AppConfig>(&content) {
+                Ok(config) => {
+                    *state.videos_folder.write().await = config.videos_folder.clone();
+                    *state.shows.write().await = config.shows.clone();
+                    *state.playlist.write().await = config.playlist.clone();
+                    *state.played_episodes.write().await = config.played_episodes.clone();
+                    *state.subtitle_mode.write().await = config.subtitle_mode.clone();
 
-                if !config.shows.is_empty() {
-                    let mut tv_files = Vec::new();
-                    for episodes in config.shows.values() {
-                        for episode in episodes {
-                            tv_files.push(episode.file_path.clone());
+                    if !config.shows.is_empty() {
+                        let mut tv_files = Vec::new();
+                        for episodes in config.shows.values() {
+                            for episode in episodes {
+                                tv_files.push(episode.file_path.clone());
+                            }
                         }
+                        *state.tv_files.write().await = tv_files;
                     }
-                    *state.tv_files.write().await = tv_files;
-                }
 
-                Json(serde_json::json!({
+                    Json(
+                        serde_json::json!({
                     "success": true,
                     "message": format!("Configuration '{}' loaded successfully", request.name)
-                }))
-            }
-            Err(e) => Json(serde_json::json!({
+                })
+                    )
+                }
+                Err(e) =>
+                    Json(
+                        serde_json::json!({
                 "success": false,
                 "message": format!("Invalid configuration format: {}", e)
-            })),
-        },
-        Err(_) => Json(serde_json::json!({
+            })
+                    ),
+            }
+        Err(_) =>
+            Json(
+                serde_json::json!({
             "success": false,
             "message": format!("Configuration '{}' not found", request.name)
-        })),
+        })
+            ),
     }
 }
 
@@ -863,28 +886,34 @@ pub async fn start_streaming(State(state): State<Arc<AppState>>) -> impl IntoRes
 
     if tv_files.is_empty() && shows.is_empty() {
         println!("[api] No video files or shows available for streaming");
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": "No video files available. Please set a videos folder and scan for videos first."
-        }));
+        })
+        );
     }
 
     let playlist = state.playlist.read().await;
     if playlist.is_empty() && tv_files.is_empty() {
-        return Json(serde_json::json!({
+        return Json(
+            serde_json::json!({
             "success": false,
             "message": "No playlist set and no video files available. Please scan for videos or create a playlist."
-        }));
+        })
+        );
     }
 
     println!("[api] Starting TV loop...");
     start_tv_loop_if_needed(state.clone()).await;
     println!("[api] TV loop started successfully");
 
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "success": true,
         "message": "Streaming started successfully"
-    }))
+    })
+    )
 }
 
 pub async fn get_subtitle_mode(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -896,7 +925,7 @@ pub async fn get_subtitle_mode(State(state): State<Arc<AppState>>) -> impl IntoR
 
 pub async fn set_subtitle_mode(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<SetSubtitleModeRequest>,
+    Json(request): Json<SetSubtitleModeRequest>
 ) -> impl IntoResponse {
     println!("[api] Setting subtitle mode to: {:?}", request.mode);
 
@@ -905,9 +934,11 @@ pub async fn set_subtitle_mode(
 
     println!("[api] Subtitle mode updated successfully");
 
-    Json(serde_json::json!({
+    Json(
+        serde_json::json!({
         "success": true,
         "mode": request.mode,
         "message": format!("Subtitle mode set to {:?}", request.mode)
-    }))
+    })
+    )
 }

@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{ collections::HashMap, path::{ Path, PathBuf } };
 
 use regex::Regex;
 use walkdir::WalkDir;
@@ -15,7 +12,9 @@ pub async fn scan_for_videos(folder: &Path) -> Vec<PathBuf> {
     println!("[scan] Starting video scan of folder: {}", folder.display());
     println!("[scan] Looking for extensions: {:?}", video_extensions);
 
-    for entry in WalkDir::new(folder).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(folder)
+        .into_iter()
+        .filter_map(|e| e.ok()) {
         if entry.file_type().is_file() {
             let path = entry.path();
             println!("[scan] Found file: {}", path.display());
@@ -29,10 +28,7 @@ pub async fn scan_for_videos(folder: &Path) -> Vec<PathBuf> {
                         println!("[scan] Video file accepted: {}", path.display());
                         video_files.push(path.to_path_buf());
                     } else {
-                        println!(
-                            "[scan] Extension '{}' not in video extensions list",
-                            ext_lower
-                        );
+                        println!("[scan] Extension '{}' not in video extensions list", ext_lower);
                     }
                 } else {
                     println!("[scan] Could not convert extension to string");
@@ -43,10 +39,7 @@ pub async fn scan_for_videos(folder: &Path) -> Vec<PathBuf> {
         }
     }
 
-    println!(
-        "[scan] Scan complete. Found {} video files",
-        video_files.len()
-    );
+    println!("[scan] Scan complete. Found {} video files", video_files.len());
     for (i, file) in video_files.iter().enumerate() {
         println!("[scan] {}: {}", i + 1, file.display());
     }
@@ -64,18 +57,17 @@ pub async fn organize_shows_and_episodes(video_files: &[PathBuf]) -> HashMap<Str
         episode.id = episode_id;
         episode_id += 1;
 
-        shows
-            .entry(episode.show_name.clone())
-            .or_insert_with(Vec::new)
-            .push(episode);
+        shows.entry(episode.show_name.clone()).or_insert_with(Vec::new).push(episode);
     }
 
     for episodes in shows.values_mut() {
-        episodes.sort_by(|a, b| match (a.episode_number, b.episode_number) {
-            (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.name.cmp(&b.name),
+        episodes.sort_by(|a, b| {
+            match (a.episode_number, b.episode_number) {
+                (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            }
         });
 
         for (index, episode) in episodes.iter_mut().enumerate() {
@@ -118,10 +110,7 @@ fn extract_episode_number(filename: &str) -> Option<usize> {
     }
 
     // Pattern 2: "Show Name Episode 5", "Show Name Ep 10"
-    if let Some(captures) = Regex::new(r"(?i)(?:episode|ep)\s+(\d+)")
-        .ok()?
-        .captures(filename)
-    {
+    if let Some(captures) = Regex::new(r"(?i)(?:episode|ep)\s+(\d+)").ok()?.captures(filename) {
         return captures.get(1)?.as_str().parse().ok();
     }
 

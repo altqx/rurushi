@@ -3,17 +3,14 @@ mod models;
 mod streaming;
 mod video;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{ collections::HashMap, sync::Arc };
 
-use anyhow::{Context, Result};
-use axum::{
-    Router,
-    routing::{get, post},
-};
-use tokio::{fs, net::TcpListener, sync::RwLock};
+use anyhow::{ Context, Result };
+use axum::{ Router, routing::{ get, post } };
+use tokio::{ fs, net::TcpListener, sync::RwLock };
 use tower_http::services::ServeDir;
 
-use models::{AppConfig, AppState};
+use models::{ AppConfig, AppState };
 use streaming::start_tv_loop_if_needed;
 
 /// Load the default configuration if it exists
@@ -22,18 +19,16 @@ async fn load_default_config(hls_root: &std::path::Path) -> AppConfig {
 
     if config_file.exists() {
         match tokio::fs::read_to_string(&config_file).await {
-            Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
-                Ok(config) => {
-                    println!(
-                        "Loaded default configuration from {}",
-                        config_file.display()
-                    );
-                    return config;
+            Ok(content) =>
+                match serde_json::from_str::<AppConfig>(&content) {
+                    Ok(config) => {
+                        println!("Loaded default configuration from {}", config_file.display());
+                        return config;
+                    }
+                    Err(e) => {
+                        println!("Failed to parse default configuration: {}", e);
+                    }
                 }
-                Err(e) => {
-                    println!("Failed to parse default configuration: {}", e);
-                }
-            },
             Err(e) => {
                 println!("Failed to read default configuration: {}", e);
             }
@@ -101,8 +96,6 @@ async fn main() -> Result<()> {
     println!("- HLS files served under /hls");
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, router)
-        .await
-        .context("server error")?;
+    axum::serve(listener, router).await.context("server error")?;
     Ok(())
 }

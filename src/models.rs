@@ -1,7 +1,7 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{ collections::HashMap, path::PathBuf, sync::Arc };
 
-use serde::{Deserialize, Serialize};
-use tokio::{sync::RwLock, task::JoinHandle};
+use serde::{ Deserialize, Serialize };
+use tokio::{ sync::RwLock, task::JoinHandle };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SubtitleMode {

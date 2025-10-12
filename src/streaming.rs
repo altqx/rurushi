@@ -1,13 +1,8 @@
-use std::{
-    path::Path,
-    process::Stdio,
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use std::{ path::Path, process::Stdio, sync::{ Arc, OnceLock }, time::Duration };
 
-use tokio::{fs, process::Command, time};
+use tokio::{ fs, process::Command, time };
 
-use crate::models::{AppState, SubtitleMode};
+use crate::models::{ AppState, SubtitleMode };
 
 static FFMPEG_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
@@ -18,8 +13,7 @@ async fn detect_subtitle_format(input_path: &Path) -> Result<bool, String> {
         .args(["-show_streams"])
         .args(["-select_streams", "s"])
         .arg(input_path.as_os_str())
-        .output()
-        .await
+        .output().await
         .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
 
     if !output.status.success() {
@@ -40,10 +34,7 @@ async fn detect_subtitle_format(input_path: &Path) -> Result<bool, String> {
 
     for codec in &bitmap_codecs {
         if json_output.contains(codec) {
-            println!(
-                "[subtitle] Detected bitmap-based subtitle format: {}",
-                codec
-            );
+            println!("[subtitle] Detected bitmap-based subtitle format: {}", codec);
             return Ok(false); // burn
         }
     }
@@ -60,7 +51,7 @@ async fn detect_subtitle_format(input_path: &Path) -> Result<bool, String> {
 async fn build_ffmpeg_command(
     input_path: &Path,
     output_dir: &Path,
-    subtitle_mode: &SubtitleMode,
+    subtitle_mode: &SubtitleMode
 ) -> Command {
     let mut cmd = Command::new("ffmpeg");
     let seg_tmpl = output_dir.join("%09d.ts");
@@ -69,24 +60,32 @@ async fn build_ffmpeg_command(
 
     match subtitle_mode {
         SubtitleMode::None => {
-            cmd.args(["-map", "0:v:0"])         
+            cmd.args(["-map", "0:v:0"])
                 .args(["-map", "0:a?"])
-                .args(["-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"]);
+                .args([
+                    "-vf",
+                    "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                ]);
         }
         SubtitleMode::Smart => {
             let can_convert = detect_subtitle_format(input_path).await.unwrap_or(false);
 
             if can_convert {
                 println!("[subtitle] Smart mode: Converting text-based subtitles to WebVTT");
-                cmd.args(["-map", "0:v:0"])          
-                    .args(["-map", "0:a?"])          
+                cmd.args(["-map", "0:v:0"])
+                    .args(["-map", "0:a?"])
                     .args(["-map", "0:s?"])
-                    .args(["-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"]) 
+                    .args([
+                        "-vf",
+                        "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                    ])
                     .args(["-c:s", "webvtt"]);
             } else {
                 println!("[subtitle] Smart mode: Burning bitmap-based subtitles into video");
-                cmd.args(["-filter_complex", 
-                    "[0:v:0]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v];[0:s:0]scale=1920:1080[s];[v][s]overlay[vout]"])
+                cmd.args([
+                    "-filter_complex",
+                    "[0:v:0]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v];[0:s:0]scale=1920:1080[s];[v][s]overlay[vout]",
+                ])
                     .args(["-map", "[vout]"])
                     .args(["-map", "0:a?"]);
             }
@@ -130,10 +129,7 @@ async fn check_ffmpeg_availability() -> Result<(), String> {
                 Ok(())
             } else {
                 FFMPEG_AVAILABLE.set(false).unwrap();
-                Err(format!(
-                    "FFmpeg version check failed with status: {}",
-                    output.status
-                ))
+                Err(format!("FFmpeg version check failed with status: {}", output.status))
             }
         }
         Err(e) => {
@@ -145,19 +141,13 @@ async fn check_ffmpeg_availability() -> Result<(), String> {
 
 async fn execute_ffmpeg_streaming(cmd: &mut Command, file_path: &Path) -> Result<(), String> {
     println!("[streaming] Starting FFmpeg process...");
-    println!(
-        "[streaming] Working directory: {:?}",
-        std::env::current_dir()
-    );
+    println!("[streaming] Working directory: {:?}", std::env::current_dir());
     println!("[streaming] FFmpeg command: {:?}", cmd);
 
     match cmd.spawn() {
         Ok(mut child) => {
             let pid = child.id().unwrap_or(0);
-            println!(
-                "[streaming] FFmpeg process started successfully (PID: {})",
-                pid
-            );
+            println!("[streaming] FFmpeg process started successfully (PID: {})", pid);
 
             match child.wait().await {
                 Ok(status) => {
@@ -171,27 +161,20 @@ async fn execute_ffmpeg_streaming(cmd: &mut Command, file_path: &Path) -> Result
                 Err(e) => Err(format!("Error waiting for FFmpeg process: {}", e)),
             }
         }
-        Err(e) => Err(format!(
-            "Failed to start FFmpeg for {}: {}",
-            file_path.display(),
-            e
-        )),
+        Err(e) => Err(format!("Failed to start FFmpeg for {}: {}", file_path.display(), e)),
     }
 }
 
 /// Clean up HLS output directory before starting new streaming session
 async fn cleanup_hls_directory(out_dir: &Path) -> Result<(), String> {
     if out_dir.exists() {
-        println!(
-            "[streaming] Cleaning up existing HLS directory: {}",
-            out_dir.display()
-        );
-        fs::remove_dir_all(out_dir)
-            .await
+        println!("[streaming] Cleaning up existing HLS directory: {}", out_dir.display());
+        fs
+            ::remove_dir_all(out_dir).await
             .map_err(|e| format!("Failed to remove HLS directory: {}", e))?;
     }
-    fs::create_dir_all(out_dir)
-        .await
+    fs
+        ::create_dir_all(out_dir).await
         .map_err(|e| format!("Failed to create HLS directory: {}", e))?;
     println!("[streaming] HLS directory ready: {}", out_dir.display());
     Ok(())
@@ -202,7 +185,7 @@ async fn process_episode(
     _item: &crate::models::PlaylistItem,
     _played_episodes: Arc<tokio::sync::RwLock<std::collections::HashMap<String, Vec<usize>>>>,
     out_dir: &Path,
-    subtitle_mode: &SubtitleMode,
+    subtitle_mode: &SubtitleMode
 ) -> Result<(), String> {
     let file_path = &episode.file_path;
 
@@ -218,10 +201,7 @@ async fn process_episode(
     let playlist_path = out_dir.join("index.m3u8");
     match tokio::fs::metadata(&playlist_path).await {
         Ok(metadata) => {
-            println!(
-                "[playlist] HLS playlist created! ({} bytes)",
-                metadata.len()
-            );
+            println!("[playlist] HLS playlist created! ({} bytes)", metadata.len());
             Ok(())
         }
         Err(_) => Err("HLS playlist file not found after FFmpeg completion".to_string()),
@@ -231,7 +211,7 @@ async fn process_episode(
 async fn process_video_file(
     file: &Path,
     out_dir: &Path,
-    subtitle_mode: &SubtitleMode,
+    subtitle_mode: &SubtitleMode
 ) -> Result<(), String> {
     if !file.exists() {
         return Err(format!("File does not exist: {}", file.display()));
@@ -296,10 +276,7 @@ pub async fn start_tv_loop_if_needed(state: Arc<AppState>) {
                 println!("[tv] Processing playlist items...");
                 println!("[tv] Playlist has {} items to process", playlist.len());
                 for (i, item) in playlist.iter().enumerate() {
-                    println!(
-                        "[tv] Processing playlist item {}: show='{}'",
-                        i, item.show_name
-                    );
+                    println!("[tv] Processing playlist item {}: show='{}'", i, item.show_name);
                     if let Some(episodes) = shows.get(&item.show_name) {
                         println!(
                             "[tv] Found {} episodes for show '{}'",
@@ -332,26 +309,22 @@ pub async fn start_tv_loop_if_needed(state: Arc<AppState>) {
 
                             if item.repeat_count == 0 {
                                 played_episodes
-                                    .write()
-                                    .await
+                                    .write().await
                                     .entry(item.show_name.clone())
                                     .or_insert_with(Vec::new)
                                     .push(episode.id);
                             }
 
-                            println!(
-                                "[playlist] Processing {} - {}",
-                                item.show_name, episode.name
-                            );
+                            println!("[playlist] Processing {} - {}", item.show_name, episode.name);
 
-                            match process_episode(
-                                episode,
-                                item,
-                                Arc::clone(&played_episodes),
-                                &out_dir,
-                                &subtitle_mode,
-                            )
-                            .await
+                            match
+                                process_episode(
+                                    episode,
+                                    item,
+                                    Arc::clone(&played_episodes),
+                                    &out_dir,
+                                    &subtitle_mode
+                                ).await
                             {
                                 Ok(_) => {
                                     println!("[playlist] Episode processed successfully");
