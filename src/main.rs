@@ -1,3 +1,4 @@
+mod api;
 mod handlers;
 mod models;
 mod streaming;
@@ -6,44 +7,42 @@ mod video;
 use std::{ collections::HashMap, sync::Arc };
 
 use anyhow::{ Context, Result };
-use axum::{ Router, routing::{ get, post } };
-use tokio::{ fs, net::TcpListener, sync::RwLock };
-use tower_http::services::ServeDir;
+use axum::{ routing::{ delete, get, post }, Router };
+use tokio::{ fs, sync::RwLock };
+use tower_http::{ cors::CorsLayer, services::ServeDir };
 
 use models::{ AppConfig, AppState };
-use streaming::start_tv_loop_if_needed;
 
-/// Load the default configuration if it exists
-async fn load_default_config(hls_root: &std::path::Path) -> AppConfig {
-    let config_file = hls_root.join("configs").join("default.json");
-
-    if config_file.exists() {
-        match tokio::fs::read_to_string(&config_file).await {
-            Ok(content) =>
-                match serde_json::from_str::<AppConfig>(&content) {
-                    Ok(config) => {
-                        println!("Loaded default configuration from {}", config_file.display());
-                        return config;
-                    }
-                    Err(e) => {
-                        println!("Failed to parse default configuration: {}", e);
-                    }
-                }
-            Err(e) => {
-                println!("Failed to read default configuration: {}", e);
-            }
-        }
+async fn load_config() -> Result<AppConfig> {
+    let exe_dir = std::env::current_exe()
+        .context("Failed to get executable path")?
+        .parent()
+        .context("Failed to get executable directory")?
+        .to_path_buf();
+    
+    let config_path = exe_dir.join("config.yml");
+    
+    if !config_path.exists() {
+        println!("No config.yml found at {}, using default configuration", config_path.display());
+        return Ok(AppConfig::default());
     }
 
-    println!("No default configuration found, using empty configuration");
-    AppConfig::default()
+    println!("Loading configuration from {}", config_path.display());
+    let content = tokio::fs::read_to_string(&config_path).await
+        .context("Failed to read config.yml")?;
+    
+    let config: AppConfig = serde_yaml::from_str(&content)
+        .context("Failed to parse config.yml")?;
+    
+    println!("Configuration loaded successfully");
+    Ok(config)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let hls_root = std::env::temp_dir().join("Rurushi-hls");
     fs::create_dir_all(&hls_root).await?;
-    let config = load_default_config(&hls_root).await;
+    let config = load_config().await?;
 
     let mut tv_files = Vec::new();
     if !config.shows.is_empty() {
@@ -52,50 +51,71 @@ async fn main() -> Result<()> {
                 tv_files.push(episode.file_path.clone());
             }
         }
+        println!("Loaded {} video files from config", tv_files.len());
     }
 
     let state = Arc::new(AppState {
-        tv_files: RwLock::new(tv_files),
-        hls_root,
+        tv_files: RwLock::new(tv_files.clone()),
+        hls_root: hls_root.clone(),
         jobs: RwLock::new(HashMap::new()),
-        videos_folder: RwLock::new(config.videos_folder),
-        shows: RwLock::new(config.shows),
-        playlist: RwLock::new(config.playlist),
-        played_episodes: Arc::new(RwLock::new(config.played_episodes)),
-        subtitle_mode: RwLock::new(config.subtitle_mode),
+        videos_folder: RwLock::new(config.videos_folder.clone()),
+        shows: RwLock::new(config.shows.clone()),
+        playlist: RwLock::new(config.playlist.clone()),
+        played_episodes: Arc::new(RwLock::new(config.played_episodes.clone())),
+        subtitle_mode: RwLock::new(config.subtitle_mode.clone()),
+        current_playing: RwLock::new(None),
+        is_playing: RwLock::new(false),
     });
 
-    start_tv_loop_if_needed(state.clone()).await;
+    println!("Starting Rurushi HLS Server with Axum API + Next.js WebUI...");
+    println!("HLS output directory: {}", hls_root.display());
 
-    let router = Router::new()
-        .route("/webui", get(handlers::root))
-        .route("/api/channels", get(handlers::list_channels))
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        streaming::stop_streaming(state_clone).await;
+    });
+
+    start_http_server(state, hls_root).await?;
+
+    Ok(())
+}
+
+async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -> Result<()> {
+    let cors = CorsLayer::permissive();
+
+    let app = Router::new()
+        // streaming endpoints
         .route("/stream/{id}", get(handlers::stream_m3u8))
-        .route("/api/videos-folder", get(handlers::get_videos_folder))
-        .route("/api/videos-folder", post(handlers::set_videos_folder))
-        .route("/api/scan-videos", post(handlers::scan_videos_folder))
-        .route("/api/shows", get(handlers::get_shows))
-        .route("/api/playlist", get(handlers::get_playlist))
-        .route("/api/playlist", post(handlers::set_playlist))
-        .route("/api/playlist/auto", post(handlers::enable_auto_mode))
-        .route("/api/playlist/status", get(handlers::get_playlist_status))
-        .route("/api/playlist/save", post(handlers::save_playlist))
-        .route("/api/playlist/load", post(handlers::load_playlist))
-        .route("/api/configs", get(handlers::list_configs))
-        .route("/api/config/save", post(handlers::save_config))
-        .route("/api/config/load", post(handlers::load_config))
-        .route("/api/subtitle-mode", get(handlers::get_subtitle_mode))
-        .route("/api/subtitle-mode", post(handlers::set_subtitle_mode))
-        .route("/api/start-streaming", post(handlers::start_streaming))
-        .nest_service("/hls", ServeDir::new(state.hls_root.clone()))
-        .with_state(state.clone());
+        .route("/health", get(handlers::health_check))
+        .nest_service("/hls", ServeDir::new(hls_root))
+        // endpoints
+        .route("/api/config", get(api::get_config))
+        .route("/api/folder", post(api::set_folder))
+        .route("/api/scan", post(api::scan_videos))
+        .route("/api/files", get(api::get_files))
+        .route("/api/shows", get(api::get_shows))
+        .route("/api/play", post(api::play_video))
+        .route("/api/stop", post(api::stop_playback))
+        .route("/api/start-streaming", post(api::start_streaming))
+        .route("/api/subtitle-mode", post(api::set_subtitle_mode))
+        .route("/api/playlist", get(api::get_playlist))
+        .route("/api/playlist/add", post(api::add_to_playlist))
+        .route("/api/playlist/{index}", delete(api::remove_from_playlist))
+        .route("/api/playlist/move", post(api::move_playlist_item))
+        .route("/api/playlist", delete(api::clear_playlist))
+        .layer(cors)
+        .with_state(state);
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!("HLS server listening on http://{addr}");
-    println!("- Channel list: http://{addr}/api/channels");
-    println!("- HLS files served under /hls");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    println!("[http] Server listening on http://{}", addr);
+    println!("[http] API available at http://{}/api", addr);
+    println!("[http] Stream available at http://{}/stream/tv", addr);
+    println!("[http] Run Next.js dev server: cd rurushi-webui && npm run dev");
 
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, router).await.context("server error")?;
+    axum::serve(listener, app)
+        .await
+        .context("HTTP server error")?;
+
     Ok(())
 }

@@ -24,6 +24,8 @@ pub struct AppState {
     pub playlist: RwLock<Vec<PlaylistItem>>,
     pub played_episodes: Arc<RwLock<HashMap<String, Vec<usize>>>>,
     pub subtitle_mode: RwLock<SubtitleMode>,
+    pub current_playing: RwLock<Option<PathBuf>>,
+    pub is_playing: RwLock<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -40,41 +42,6 @@ pub struct PlaylistItem {
     pub show_name: String,
     pub episode_range: Option<(usize, usize)>,
     pub repeat_count: usize,
-}
-
-#[derive(Serialize)]
-pub struct ChannelInfo {
-    pub id: String,
-    pub sources: Vec<String>,
-    pub m3u8: String,
-}
-
-#[derive(Deserialize)]
-pub struct SetVideosFolderRequest {
-    pub path: String,
-}
-
-#[derive(Serialize)]
-pub struct FolderScanResult {
-    pub success: bool,
-    pub video_count: usize,
-    pub videos_folder: Option<String>,
-    pub message: String,
-}
-
-#[derive(Deserialize)]
-pub struct SetPlaylistRequest {
-    pub playlist: Vec<PlaylistItem>,
-}
-
-#[derive(Deserialize)]
-pub struct SavePlaylistRequest {
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-pub struct LoadPlaylistRequest {
-    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -96,19 +63,4 @@ impl Default for AppConfig {
             subtitle_mode: SubtitleMode::default(),
         }
     }
-}
-
-#[derive(Deserialize)]
-pub struct SaveConfigRequest {
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-pub struct LoadConfigRequest {
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-pub struct SetSubtitleModeRequest {
-    pub mode: SubtitleMode,
 }

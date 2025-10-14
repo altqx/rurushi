@@ -1,1 +1,17 @@
+# Rust
 /target
+Cargo.lock
+
+# Config
+config.yml
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

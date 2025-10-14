@@ -1,10 +1,137 @@
-use std::{ path::Path, process::Stdio, sync::{ Arc, OnceLock }, time::Duration };
+use std::{ path::{ Path, PathBuf }, process::Stdio, sync::{ Arc, OnceLock }, time::Duration };
 
 use tokio::{ fs, process::Command, time };
 
 use crate::models::{ AppState, SubtitleMode };
 
 static FFMPEG_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+/// Generate a test card stream
+async fn stream_test_card(out_dir: &Path) -> Result<(), String> {
+    println!("[streaming] Generating test card stream...");
+
+    cleanup_hls_directory(out_dir).await?;
+
+    let mut cmd = Command::new("ffmpeg");
+    let seg_tmpl = out_dir.join("%09d.ts");
+
+    cmd.arg("-re")
+        .args(["-f", "lavfi"])
+        .args(["-i", "smptebars=duration=3600:size=1920x1080:rate=30"])
+        .args(["-f", "lavfi"])
+        .args(["-i", "sine=frequency=1000:duration=3600"])
+        .args(["-c:v", "libx264", "-preset", "veryfast"])
+        .args(["-s", "1920x1080"])
+        .args(["-b:v", "2M", "-maxrate", "2M", "-bufsize", "4M"])
+        .args(["-c:a", "aac", "-b:a", "128k"])
+        .args(["-f", "hls"])
+        .args(["-hls_time", "4"])
+        .args(["-hls_list_size", "5"])
+        .args([
+            "-hls_flags",
+            "append_list+delete_segments+program_date_time+omit_endlist+independent_segments",
+        ])
+        .args(["-hls_segment_filename", &seg_tmpl.to_string_lossy()])
+        .arg(out_dir.join("index.m3u8"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    println!("[streaming] Test card FFmpeg command: {:?}", cmd);
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            println!("[streaming] Test card stream started");
+            tokio::spawn(async move {
+                let _ = child.wait().await;
+            });
+            Ok(())
+        }
+        Err(e) => Err(format!("Failed to start test card: {}", e)),
+    }
+}
+
+/// Play a specific file
+pub async fn play_file(state: Arc<AppState>, file_path: PathBuf) -> Result<(), String> {
+    println!("[streaming] Playing file: {}", file_path.display());
+
+    if !file_path.exists() {
+        return Err(format!("File does not exist: {}", file_path.display()));
+    }
+
+    check_ffmpeg_availability().await?;
+
+    let _out_dir = state.hls_root.join("tv");
+    let _subtitle_mode = state.subtitle_mode.read().await.clone();
+
+    // update state
+    *state.current_playing.write().await = Some(file_path.clone());
+    *state.is_playing.write().await = true;
+
+    stop_streaming(state.clone()).await;
+
+    let state_clone = state.clone();
+    let handle = tokio::spawn(async move {
+        loop {
+            let file = state_clone.current_playing.read().await.clone();
+            let is_playing = *state_clone.is_playing.read().await;
+            let subtitle_mode = state_clone.subtitle_mode.read().await.clone();
+
+            if !is_playing {
+                println!("[streaming] Playback stopped");
+                break;
+            }
+
+            if let Some(ref file_path) = file {
+                if file_path.exists() {
+                    match
+                        process_video_file(
+                            file_path,
+                            &state_clone.hls_root.join("tv"),
+                            &subtitle_mode
+                        ).await
+                    {
+                        Ok(_) => {
+                            println!("[streaming] File completed, looping...");
+                        }
+                        Err(e) => {
+                            println!("[streaming] Error playing file: {}", e);
+                            time::sleep(Duration::from_secs(2)).await;
+                        }
+                    }
+                } else {
+                    println!("[streaming] File no longer exists");
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    });
+
+    state.jobs.write().await.insert("tv".into(), handle);
+    Ok(())
+}
+
+pub async fn stop_streaming(state: Arc<AppState>) {
+    println!("[streaming] Stopping playback...");
+
+    *state.is_playing.write().await = false;
+    *state.current_playing.write().await = None;
+
+    // Cancel existing job
+    let mut jobs = state.jobs.write().await;
+    if let Some(handle) = jobs.remove("tv") {
+        handle.abort();
+        println!("[streaming] Stopped streaming job");
+    }
+
+    // Start test card
+    let out_dir = state.hls_root.join("tv");
+    if let Err(e) = stream_test_card(&out_dir).await {
+        println!("[streaming] Failed to start test card: {}", e);
+    }
+}
 
 async fn detect_subtitle_format(input_path: &Path) -> Result<bool, String> {
     let output = Command::new("ffprobe")
