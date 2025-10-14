@@ -1,0 +1,3 @@
+[submodule "rurushi-webui"]
+	path = webui
+	url = https://github.com/altqx/rurushi-webui.git
