@@ -1,3 +1,4 @@
-[submodule "rurushi-webui"]
+[submodule "webui"]
 	path = webui
 	url = https://github.com/altqx/rurushi-webui.git
+	branch = main
