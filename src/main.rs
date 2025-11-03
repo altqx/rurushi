@@ -83,12 +83,22 @@ async fn main() -> Result<()> {
 async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -> Result<()> {
     let cors = CorsLayer::permissive();
 
-    let app = Router::new()
+    // Determine WebUI path (either built static files or dev server)
+    let exe_dir = std::env::current_exe()
+        .context("Failed to get executable path")?
+        .parent()
+        .context("Failed to get executable directory")?
+        .to_path_buf();
+    
+    let webui_path = exe_dir.join("webui").join("out");
+    let has_static_webui = webui_path.exists();
+
+    let mut app = Router::new()
         // streaming endpoints
         .route("/stream/{id}", get(handlers::stream_m3u8))
         .route("/health", get(handlers::health_check))
         .nest_service("/hls", ServeDir::new(hls_root))
-        // endpoints
+        // API endpoints
         .route("/api/config", get(api::get_config))
         .route("/api/folder", post(api::set_folder))
         .route("/api/scan", post(api::scan_videos))
@@ -106,12 +116,24 @@ async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -
         .layer(cors)
         .with_state(state);
 
+    // Serve static webui if available
+    if has_static_webui {
+        println!("[http] Serving static WebUI from: {}", webui_path.display());
+        app = app.nest_service("/", ServeDir::new(webui_path));
+    }
+
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("[http] Server listening on http://{}", addr);
     println!("[http] API available at http://{}/api", addr);
     println!("[http] Stream available at http://{}/stream/tv", addr);
-    println!("[http] Run Next.js dev server: cd rurushi-webui && npm run dev");
+    
+    if has_static_webui {
+        println!("[http] WebUI available at http://{}/", addr);
+    } else {
+        println!("[http] WebUI not found. For development, run: cd webui && npm run dev");
+        println!("[http] For production, build WebUI first: cd webui && npm run build");
+    }
 
     axum::serve(listener, app)
         .await
