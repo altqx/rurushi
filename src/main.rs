@@ -14,26 +14,27 @@ use tower_http::{ cors::CorsLayer, services::ServeDir };
 use models::{ AppConfig, AppState };
 
 async fn load_config() -> Result<AppConfig> {
-    let exe_dir = std::env::current_exe()
+    let exe_dir = std::env
+        ::current_exe()
         .context("Failed to get executable path")?
         .parent()
         .context("Failed to get executable directory")?
         .to_path_buf();
-    
+
     let config_path = exe_dir.join("config.yml");
-    
+
     if !config_path.exists() {
         println!("No config.yml found at {}, using default configuration", config_path.display());
         return Ok(AppConfig::default());
     }
 
     println!("Loading configuration from {}", config_path.display());
-    let content = tokio::fs::read_to_string(&config_path).await
+    let content = tokio::fs
+        ::read_to_string(&config_path).await
         .context("Failed to read config.yml")?;
-    
-    let config: AppConfig = serde_yaml::from_str(&content)
-        .context("Failed to parse config.yml")?;
-    
+
+    let config: AppConfig = serde_yaml::from_str(&content).context("Failed to parse config.yml")?;
+
     println!("Configuration loaded successfully");
     Ok(config)
 }
@@ -83,14 +84,27 @@ async fn main() -> Result<()> {
 async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -> Result<()> {
     let cors = CorsLayer::permissive();
 
-    // Determine WebUI path (either built static files or dev server)
-    let exe_dir = std::env::current_exe()
+    // Determine WebUI path - check in order:
+    // 1. webui/out in the same directory as the executable (production)
+    // 2. webui/out relative to current working directory (development)
+    let exe_dir = std::env
+        ::current_exe()
         .context("Failed to get executable path")?
         .parent()
         .context("Failed to get executable directory")?
         .to_path_buf();
-    
-    let webui_path = exe_dir.join("webui").join("out");
+
+    let webui_path_exe = exe_dir.join("webui").join("out");
+    let webui_path_cwd = std::path::PathBuf::from("webui/out");
+
+    let webui_path = if webui_path_exe.exists() {
+        webui_path_exe
+    } else if webui_path_cwd.exists() {
+        webui_path_cwd
+    } else {
+        webui_path_cwd // Default to cwd path even if it doesn't exist
+    };
+
     let has_static_webui = webui_path.exists();
 
     let mut app = Router::new()
@@ -119,7 +133,9 @@ async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -
     // Serve static webui if available
     if has_static_webui {
         println!("[http] Serving static WebUI from: {}", webui_path.display());
-        app = app.nest_service("/", ServeDir::new(webui_path));
+        app = app.fallback_service(
+            ServeDir::new(webui_path).append_index_html_on_directories(true)
+        );
     }
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 8080));
@@ -127,17 +143,14 @@ async fn start_http_server(state: Arc<AppState>, hls_root: std::path::PathBuf) -
     println!("[http] Server listening on http://{}", addr);
     println!("[http] API available at http://{}/api", addr);
     println!("[http] Stream available at http://{}/stream/tv", addr);
-    
+
     if has_static_webui {
         println!("[http] WebUI available at http://{}/", addr);
     } else {
-        println!("[http] WebUI not found. For development, run: cd webui && npm run dev");
-        println!("[http] For production, build WebUI first: cd webui && npm run build");
+        println!("[http] WebUI not built. Build it with: cd webui && bun run build");
     }
 
-    axum::serve(listener, app)
-        .await
-        .context("HTTP server error")?;
+    axum::serve(listener, app).await.context("HTTP server error")?;
 
     Ok(())
 }

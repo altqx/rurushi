@@ -12,7 +12,7 @@ pub async fn stream_m3u8(
     State(state): State<Arc<AppState>>,
     AxPath(id): AxPath<String>,
     _uri: Uri,
-    _headers: HeaderMap,
+    _headers: HeaderMap
 ) -> Result<Response, (StatusCode, String)> {
     if id != "tv" {
         return Err((StatusCode::NOT_FOUND, format!("Unknown channel: {}", id)));
